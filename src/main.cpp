@@ -9,6 +9,7 @@
 QueueHandle_t velocity_queue;
 QueueHandle_t setpoint_queue;
 QueueHandle_t pid_output_queue;
+QueueHandle_t telemetry_queue;
 
 void setup() {
 
@@ -16,9 +17,10 @@ void setup() {
 
     init_encoder();
 
-    velocity_queue   = xQueueCreate(1, sizeof(float));
+    velocity_queue   = xQueueCreate(1, sizeof(velocity_sample_t));
     setpoint_queue   = xQueueCreate(1, sizeof(float));
     pid_output_queue = xQueueCreate(1, sizeof(pid_output_t));
+    telemetry_queue  = xQueueCreate(1, sizeof(telemetry_t));
 
     init_velocity_task(velocity_queue);
 
@@ -28,11 +30,11 @@ void setup() {
         pid_output_queue
     );
 
-    init_pwm_task(pid_output_queue);
+    init_pwm_task(pid_output_queue, telemetry_queue);
 
     init_comms_task(
         setpoint_queue,
-        pid_output_queue
+        telemetry_queue
     );
 }
 

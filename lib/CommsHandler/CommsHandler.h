@@ -6,7 +6,7 @@
 
 uint8_t init_comms_task(
     QueueHandle_t setpoint_q,
-    QueueHandle_t pid_output_q
+    QueueHandle_t telemetry_q
 );
 
 #endif

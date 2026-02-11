@@ -5,6 +5,6 @@
 #include "freertos/queue.h"
 #include <stdint.h>
 
-uint8_t init_pwm_task(QueueHandle_t pid_output_q);
+uint8_t init_pwm_task(QueueHandle_t pid_output_q, QueueHandle_t telemetry_q);
 
 #endif

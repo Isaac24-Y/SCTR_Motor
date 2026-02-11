@@ -9,14 +9,14 @@
 
 // ---------------- Queues ----------------
 static QueueHandle_t setpoint_queue = NULL;
-static QueueHandle_t pid_output_queue = NULL;
+static QueueHandle_t telemetry_queue = NULL;
 
 // ---------------- Tarea ----------------
 static void comms_task(void *param) {
 
     TickType_t last_wake = xTaskGetTickCount();
     float sp = 0.0f;
-    pid_output_t out;
+    telemetry_t telemetry = {0};
 
     for (;;) {
 
@@ -29,26 +29,26 @@ static void comms_task(void *param) {
         if (Serial.available()) {
 
             String cmd = Serial.readStringUntil('\n');
-            cmd.trim();  // elimina \r y espacios
+            cmd.trim();
 
             // ---- Setpoint ----
             if (cmd.startsWith("SP:")) {
 
                 float sp_rx = cmd.substring(3).toFloat();
                 xQueueOverwrite(setpoint_queue, &sp_rx);
-                sp = sp_rx; // mantener copia local para TX
+                sp = sp_rx;
             }
 
             // ---- PID ----
             else if (cmd.startsWith("PID:")) {
 
-                float kc, ti, td;
+                float kp, ki, kd;
 
-                if (sscanf(cmd.c_str(), "PID:%f,%f,%f", &kc, &ti, &td) == 3) {
+                if (sscanf(cmd.c_str(), "PID:%f,%f,%f", &kp, &ki, &kd) == 3) {
                     pid_params_t params = {
-                        .kp = kc,
-                        .ki = ti,
-                        .kd = td
+                        .kp = kp,
+                        .ki = ki,
+                        .kd = kd
                     };
                     pid_update_params(params);
                 }
@@ -56,27 +56,45 @@ static void comms_task(void *param) {
         }
 
         // ----- TX -----
-        if (xQueueReceive(pid_output_queue, &out, 0)) {
-            Serial.print("SP:");
-            Serial.print(sp);
-            Serial.print(",PV:");
-            Serial.print(out.pv);
-            Serial.print(",OP:");
-            Serial.println(out.control);
+        if (xQueueReceive(telemetry_queue, &telemetry, 0) == pdTRUE) {
+            sp = telemetry.sp;
         }
+
+        Serial.print("SP:");
+        Serial.print(sp, 3);
+        Serial.print(",PV:");
+        Serial.print(telemetry.pv, 3);
+        Serial.print(",OP:");
+        Serial.print(telemetry.op, 3);
+        Serial.print(",ERR:");
+        Serial.print(telemetry.error, 3);
+        Serial.print(",Tvel_us:");
+        Serial.print(telemetry.velocity_period_us);
+        Serial.print(",JvelMax_us:");
+        Serial.print(telemetry.velocity_jitter_us);
+        Serial.print(",Tpid_us:");
+        Serial.print(telemetry.pid_period_us);
+        Serial.print(",JpidMax_us:");
+        Serial.print(telemetry.pid_jitter_us);
+        Serial.print(",Lpid_us:");
+        Serial.print(telemetry.pid_latency_us);
+        Serial.print(",Lpwm_us:");
+        Serial.print(telemetry.control_to_pwm_latency_us);
+        Serial.print(",Ltotal_us:");
+        Serial.println(telemetry.sensor_to_pwm_latency_us);
     }
 }
 
 // ---------------- Init ----------------
 uint8_t init_comms_task(
     QueueHandle_t setpoint_q,
-    QueueHandle_t pid_output_q
+    QueueHandle_t telemetry_q
 ) {
-    if (!setpoint_q || !pid_output_q)
+    if (!setpoint_q || !telemetry_q)
         return 0;
 
     setpoint_queue = setpoint_q;
-    pid_output_queue = pid_output_q;
+    telemetry_queue = telemetry_q;
 
     BaseType_t result = xTaskCreatePinnedToCore(
         comms_task,
