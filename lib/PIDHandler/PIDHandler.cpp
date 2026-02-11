@@ -1,10 +1,12 @@
 #include "PIDHandler.h"
+#include "VelocityHandler.h"
 #include <Arduino.h>
+#include "esp_timer.h"
 
 // ---------------- Configuración ----------------
 #define PID_TASK_PERIOD_MS   10
 #define PID_TASK_PRIORITY    2
-#define PID_TASK_STACK       2048
+#define PID_TASK_STACK       3072
 
 // ---------------- Queues ----------------
 static QueueHandle_t velocity_queue  = NULL;
@@ -22,9 +24,11 @@ static float prev_error = 0.0f;
 static void pid_task(void *parameter) {
 
     TickType_t last_wake_time = xTaskGetTickCount();
-    TickType_t now;
-    float pv = 0.0f;
     float sp = 0.0f;
+    velocity_sample_t sample = {0};
+    uint64_t last_exec_us = esp_timer_get_time();
+    uint32_t max_jitter_us = 0;
+    const uint32_t target_period_us = PID_TASK_PERIOD_MS * 1000U;
 
     for (;;) {
 
@@ -33,16 +37,23 @@ static void pid_task(void *parameter) {
             pdMS_TO_TICKS(PID_TASK_PERIOD_MS)
         );
 
-        now = xTaskGetTickCount();
+        uint64_t now_us = esp_timer_get_time();
+        uint32_t real_period_us = (uint32_t)(now_us - last_exec_us);
+        last_exec_us = now_us;
 
-        // Leer velocidad (no bloqueante)
-        xQueueReceive(velocity_queue, &pv, 0);
+        uint32_t jitter_us = (real_period_us > target_period_us)
+            ? (real_period_us - target_period_us)
+            : (target_period_us - real_period_us);
+        if (jitter_us > max_jitter_us) {
+            max_jitter_us = jitter_us;
+        }
 
-        // Leer setpoint (no bloqueante)
+        // Leer velocidad y setpoint (no bloqueante, mantiene último valor)
+        xQueueReceive(velocity_queue, &sample, 0);
         xQueueReceive(setpoint_queue, &sp, 0);
 
+        float pv = sample.velocity;
         float error = sp - pv;
-
         float dt = PID_TASK_PERIOD_MS / 1000.0f;
 
         integral += error * dt;
@@ -58,7 +69,15 @@ static void pid_task(void *parameter) {
         pid_output_t out = {
             .control = output,
             .error   = error,
-            .pv      = pv
+            .pv      = pv,
+            .sp      = sp,
+            .velocity_period_us = sample.period_us,
+            .velocity_jitter_us = sample.jitter_us,
+            .pid_period_us = real_period_us,
+            .pid_jitter_us = max_jitter_us,
+            .pid_latency_us = (uint32_t)(now_us - sample.timestamp_us),
+            .sample_timestamp_us = sample.timestamp_us,
+            .control_timestamp_us = now_us
         };
 
         xQueueOverwrite(output_queue, &out);
